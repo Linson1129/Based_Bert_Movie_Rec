@@ -29,14 +29,11 @@ def evaluate(checkpoint_path: str, config_path: str):
     model.eval()
 
     train_df, items_df, test_df = load_data(config['data']['data_dir'])
-    
-    # 获取用户历史记录 (过滤掉已交互)
+
     user_train_history = train_df.groupby('user_id')['item_id'].apply(set).to_dict()
-    # 获取测试时用户文本
     train_df_sorted = train_df.sort_values(['user_id', 'timestamp'])
     item_titles = dict(zip(items_df['item_id'], items_df['title']))
-    
-    # 2. 构建全量Item向量库
+
     print("Building Item Embeddings...")
     item_ids = items_df['item_id'].tolist()
     item_embeddings = []
@@ -55,8 +52,7 @@ def evaluate(checkpoint_path: str, config_path: str):
     np.save("checkpoints/item_embeddings.npy", item_embeddings)
     with open("checkpoints/item_ids.json", "w") as f:
         json.dump(item_ids, f)
-        
-    # 3. 构建Faiss索引
+
     d = config['model']['embedding_dim']
     if len(item_ids) < 100000:
         index = faiss.IndexFlatIP(d)
@@ -66,8 +62,7 @@ def evaluate(checkpoint_path: str, config_path: str):
         index.train(item_embeddings)
         
     index.add(item_embeddings)
-    
-    # 4. 评估循环
+
     print("Evaluating...")
     metrics = {f"Recall@{k}": [] for k in config['eval']['top_k']}
     metrics.update({f"NDCG@{k}": [] for k in config['eval']['top_k']})
@@ -78,8 +73,7 @@ def evaluate(checkpoint_path: str, config_path: str):
         for _, row in tqdm(test_df.iterrows(), total=len(test_df)):
             uid = row['user_id']
             target_iid = row['item_id']
-            
-            # 构造输入文本
+
             hist_items = train_df_sorted[train_df_sorted['user_id'] == uid]['item_id'].tolist()[-config['data']['max_history']:]
             hist_titles = [str(item_titles.get(i, "")) for i in hist_items]
             user_text = "[SEP]".join(hist_titles) if hist_titles else "无历史"
@@ -87,17 +81,14 @@ def evaluate(checkpoint_path: str, config_path: str):
             enc = tokenizer(user_text, max_length=config['data']['max_length'], padding='max_length', truncation=True, return_tensors='pt').to(device)
             u_vec = model.encode(enc['input_ids'], enc['attention_mask']).cpu().numpy()
             faiss.normalize_L2(u_vec)
-            
-            # 检索 (拉取更多以过滤训练集)
+
             search_k = max_k + len(user_train_history.get(uid, set()))
             scores, I = index.search(u_vec, search_k)
-            
-            # 过滤
+
             retrieved_items = [item_ids[idx] for idx in I[0]]
             train_items = user_train_history.get(uid, set())
             valid_retrieved = [i for i in retrieved_items if i not in train_items][:max_k]
-            
-            # 5. 计算指标
+
             for k in config['eval']['top_k']:
                 top_k_items = valid_retrieved[:k]
                 hit = 1.0 if target_iid in top_k_items else 0.0
@@ -109,8 +100,7 @@ def evaluate(checkpoint_path: str, config_path: str):
                 else:
                     ndcg = 0.0
                 metrics[f"NDCG@{k}"].append(ndcg)
-                
-    # 6. 打印结果
+
     result = {k: np.mean(v) for k, v in metrics.items()}
     print("\nEvaluation Results:")
     for k, v in result.items():

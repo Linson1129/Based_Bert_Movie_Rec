@@ -7,15 +7,10 @@ from torch.utils.data import Dataset
 
 def load_data(data_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame,pd.DataFrame]:
     """读取interactions.csv和items.csv，返回(interactions_df, items_df)"""
-    # --- 新增：绝对路径转换逻辑 ---
     if not os.path.isabs(data_dir):
-        # 获取当前 src/data.py 的绝对路径
         current_file_path = os.path.abspath(__file__)
-        # 获取项目根目录 Rec
         project_root = os.path.dirname(os.path.dirname(current_file_path))
-        # 拼接出真正的 data 绝对路径
         data_dir = os.path.join(project_root, "data")
-    # ---------------------------
 
     interactions4train_path = os.path.join(data_dir, "interactions_train.csv")
     interactions4val_path = os.path.join(data_dir, "interactions_val.csv")
@@ -26,13 +21,6 @@ def load_data(data_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame,pd.DataFrame]:
     items_df = pd.read_csv(items_path)
     return interactions_df, items_df, interactions4val_df
 
-# def split_by_time(interactions_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-#     """按时间划分，每个用户最后1条交互作为测试集"""
-#     interactions_df = interactions_df.sort_values(by=['user_id', 'timestamp'])
-#     test_df = interactions_df.groupby('user_id').tail(1)
-#     train_df = interactions_df.drop(test_df.index)
-#     return train_df, test_df
-
 class DualTowerDataset(Dataset):
     def __init__(self, interactions_df: pd.DataFrame, items_df: pd.DataFrame, tokenizer, 
                  max_length=128, num_negatives=4, max_history=10):
@@ -41,8 +29,7 @@ class DualTowerDataset(Dataset):
         self.max_length = max_length
         self.num_negatives = num_negatives
         self.max_history = max_history
-        
-        # 预处理Item文本映射: item_id -> title + "[SEP]" + description
+
         self.item_texts = {}
         self.item_titles = {}
         for _, row in items_df.iterrows():
@@ -52,8 +39,7 @@ class DualTowerDataset(Dataset):
             self.item_titles[row['item_id']] = title
             
         self.all_item_ids = items_df['item_id'].tolist()
-        
-        # 预计算每条交互时的用户历史
+
         self.histories = []
         user_hist_map = {}
         for _, row in self.interactions.iterrows():
@@ -71,12 +57,9 @@ class DualTowerDataset(Dataset):
     def __getitem__(self, idx) -> Dict[str, torch.Tensor]:
         row = self.interactions.iloc[idx]
         pos_item_id = row['item_id']
-        
-        # 构建 User 文本 (最近 max_history 个 title 拼接)
+
         user_history_titles = self.histories[idx]
         user_text = "[SEP]".join(user_history_titles) if user_history_titles else "无历史"
-        
-        # 构建 Item 文本
         pos_item_text = self.item_texts[pos_item_id]
         
         # 随机负采样
